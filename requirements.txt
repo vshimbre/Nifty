@@ -3,5 +3,6 @@ pandas
 numpy
 yfinance
 requests
-transformers
+beautifulsoup4
 torch
+transformers
