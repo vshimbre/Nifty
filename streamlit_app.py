@@ -20,6 +20,7 @@ def get_nifty_price():
         return None
 
 # Fetch NIFTY Option Chain (Using NSE API)
+    
 def fetch_option_chain():
     try:
         url = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY"
@@ -41,10 +42,20 @@ def fetch_option_chain():
                 st.error("❌ No option chain data found in API response.")
                 return pd.DataFrame()
 
-            df = pd.DataFrame(records)
+            # Extract required columns
+            extracted_data = []
+            for record in records:
+                extracted_data.append({
+                    "strikePrice": record.get("strikePrice"),
+                    "expiryDate": record.get("expiryDate"),
+                    "CE_openInterest": record.get("CE", {}).get("openInterest", 0),  # Extract from nested dict
+                    "PE_openInterest": record.get("PE", {}).get("openInterest", 0),  # Extract from nested dict
+                })
 
-            # Print column names for debugging
-            st.write("🔍 Option Chain Columns:", df.columns.tolist())
+            df = pd.DataFrame(extracted_data)
+
+            # Debugging: Show available columns
+            st.write("🔍 Available Option Chain Columns:", df.columns.tolist())
 
             return df
 
