@@ -1,5 +1,7 @@
 streamlit
-requests
+numpy
 pandas
 beautifulsoup4
+plotly
+yfinance
 textblob
