@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import requests
-from bs4 import BeautifulSoup
 from transformers import pipeline
 
 # Sentiment Analysis Model
@@ -19,23 +18,18 @@ def get_nifty_price():
         st.error(f"❌ Error fetching NIFTY price: {e}")
         return None
 
-# Fetch NIFTY Option Chain (Web Scraping)
+# Fetch NIFTY Option Chain (Using API)
 def fetch_option_chain():
     try:
-        url = "https://www.nseindia.com/option-chain"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        session = requests.Session()
-        session.get(url, headers=headers)
+        url = "https://www.niftyoptionchain.in/api/option-chain"  # Free API (Unofficial)
+        response = requests.get(url)
 
-        response = session.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, "html.parser")
-        table = soup.find("table", {"id": "optionChainTable"})
-
-        if table:
-            df = pd.read_html(str(table))[0]
+        if response.status_code == 200:
+            data = response.json()
+            df = pd.DataFrame(data["records"])  # Convert JSON to DataFrame
             return df
 
-        return pd.DataFrame()  # Return empty DataFrame if data is not found
+        return pd.DataFrame()  # Return empty DataFrame if API fails
     except Exception as e:
         st.error(f"❌ Error fetching option chain: {e}")
         return pd.DataFrame()  # Return empty DataFrame to avoid errors
@@ -71,8 +65,8 @@ def predict_market_trend():
         return "❌ Insufficient Data for Prediction"
     
     # Extract Call & Put Open Interest (OI)
-    call_oi = option_chain["OI"].iloc[:10].sum()  # Sum of top 10 Call OI
-    put_oi = option_chain["OI"].iloc[-10:].sum()  # Sum of top 10 Put OI
+    call_oi = option_chain["call_oi"].iloc[:10].sum()  # Sum of top 10 Call OI
+    put_oi = option_chain["put_oi"].iloc[:10].sum()  # Sum of top 10 Put OI
     
     news_sentiment = analyze_news_sentiment()
 
