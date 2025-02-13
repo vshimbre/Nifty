@@ -35,9 +35,20 @@ def fetch_option_chain():
 
         if response.status_code == 200:
             data = response.json()
-            df = pd.DataFrame(data["records"]["data"])  # Convert JSON to DataFrame
+            records = data.get("records", {}).get("data", [])
+
+            if not records:
+                st.error("❌ No option chain data found in API response.")
+                return pd.DataFrame()
+
+            df = pd.DataFrame(records)
+
+            # Print column names for debugging
+            st.write("🔍 Option Chain Columns:", df.columns.tolist())
+
             return df
 
+        st.error(f"❌ NSE API returned status code {response.status_code}")
         return pd.DataFrame()
     except Exception as e:
         st.error(f"❌ NSE API error: {e}")
@@ -73,9 +84,19 @@ def predict_market_trend():
     if option_chain.empty:
         return "❌ Insufficient Data for Prediction"
     
+    # Print columns to check actual available names
+    st.write("📊 Available Option Chain Columns:", option_chain.columns.tolist())
+
+    # Identify correct column names
+    call_oi_col = next((col for col in option_chain.columns if "CE_openInterest" in col or "CE" in col.lower()), None)
+    put_oi_col = next((col for col in option_chain.columns if "PE_openInterest" in col or "PE" in col.lower()), None)
+
+    if not call_oi_col or not put_oi_col:
+        return "❌ Missing Open Interest Data in API Response"
+
     # Extract Call & Put Open Interest (OI)
-    call_oi = option_chain["CE_openInterest"].iloc[:10].sum()  # Sum of top 10 Call OI
-    put_oi = option_chain["PE_openInterest"].iloc[:10].sum()  # Sum of top 10 Put OI
+    call_oi = option_chain[call_oi_col].iloc[:10].sum()
+    put_oi = option_chain[put_oi_col].iloc[:10].sum()
     
     news_sentiment = analyze_news_sentiment()
 
