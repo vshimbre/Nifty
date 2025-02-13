@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import requests
+from bs4 import BeautifulSoup
 from transformers import pipeline
 
 # Sentiment Analysis Model
@@ -18,21 +19,29 @@ def get_nifty_price():
         st.error(f"❌ Error fetching NIFTY price: {e}")
         return None
 
-# Fetch NIFTY Option Chain (Using API)
+# Fetch NIFTY Option Chain (Using NSE API)
 def fetch_option_chain():
     try:
-        url = "https://www.niftyoptionchain.in/api/option-chain"  # Free API (Unofficial)
-        response = requests.get(url)
+        url = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY"
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.nseindia.com/",
+            "accept": "application/json",
+        }
+
+        session = requests.Session()
+        session.get("https://www.nseindia.com", headers=headers)  # Create session to avoid blocking
+        response = session.get(url, headers=headers)
 
         if response.status_code == 200:
             data = response.json()
-            df = pd.DataFrame(data["records"])  # Convert JSON to DataFrame
+            df = pd.DataFrame(data["records"]["data"])  # Convert JSON to DataFrame
             return df
 
-        return pd.DataFrame()  # Return empty DataFrame if API fails
+        return pd.DataFrame()
     except Exception as e:
-        st.error(f"❌ Error fetching option chain: {e}")
-        return pd.DataFrame()  # Return empty DataFrame to avoid errors
+        st.error(f"❌ NSE API error: {e}")
+        return pd.DataFrame()
 
 # Fetch Market News
 def get_latest_news():
@@ -65,8 +74,8 @@ def predict_market_trend():
         return "❌ Insufficient Data for Prediction"
     
     # Extract Call & Put Open Interest (OI)
-    call_oi = option_chain["call_oi"].iloc[:10].sum()  # Sum of top 10 Call OI
-    put_oi = option_chain["put_oi"].iloc[:10].sum()  # Sum of top 10 Put OI
+    call_oi = option_chain["CE_openInterest"].iloc[:10].sum()  # Sum of top 10 Call OI
+    put_oi = option_chain["PE_openInterest"].iloc[:10].sum()  # Sum of top 10 Put OI
     
     news_sentiment = analyze_news_sentiment()
 
