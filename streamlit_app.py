@@ -1,26 +1,16 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import yfinance as yf
 import requests
+import pandas as pd
+from textblob import TextBlob
 from bs4 import BeautifulSoup
-from transformers import pipeline
 
-# Sentiment Analysis Model
-news_sentiment_model = pipeline("text-classification", model="ProsusAI/finbert", return_all_scores=True)
+# --- Streamlit UI ---
+st.set_page_config(page_title="NIFTY Option Chain Analysis", layout="wide")
 
-# Fetch NIFTY Live Price
-def get_nifty_price():
-    try:
-        stock = yf.Ticker("^NSEI")
-        data = stock.history(period="1d", interval="5m")
-        return data.iloc[-1]["Close"] if not data.empty else None
-    except Exception as e:
-        st.error(f"❌ Error fetching NIFTY price: {e}")
-        return None
+st.title("📈 NIFTY Market Analysis & Prediction")
+st.markdown("Real-time option chain analysis & market movement prediction for NIFTY.")
 
-# Fetch NIFTY Option Chain (Using NSE API)
-    
+# --- Fetch NIFTY Option Chain ---
 def fetch_option_chain():
     try:
         url = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY"
@@ -31,31 +21,33 @@ def fetch_option_chain():
         }
 
         session = requests.Session()
-        session.get("https://www.nseindia.com", headers=headers)  # Create session to avoid blocking
+        session.get("https://www.nseindia.com", headers=headers)  # Session to avoid blocking
         response = session.get(url, headers=headers)
 
         if response.status_code == 200:
             data = response.json()
-            records = data.get("records", {}).get("data", [])
+            
+            # Debug: Print API response structure
+            st.write("🔍 API Response Sample:", data)
 
+            records = data.get("records", {}).get("data", [])
             if not records:
                 st.error("❌ No option chain data found in API response.")
                 return pd.DataFrame()
 
-            # Extract required columns
             extracted_data = []
             for record in records:
                 extracted_data.append({
                     "strikePrice": record.get("strikePrice"),
                     "expiryDate": record.get("expiryDate"),
-                    "CE_openInterest": record.get("CE", {}).get("openInterest", 0),  # Extract from nested dict
-                    "PE_openInterest": record.get("PE", {}).get("openInterest", 0),  # Extract from nested dict
+                    "CE_openInterest": record.get("CE", {}).get("openInterest", 0),
+                    "PE_openInterest": record.get("PE", {}).get("openInterest", 0),
+                    "CE_lastPrice": record.get("CE", {}).get("lastPrice", 0),
+                    "PE_lastPrice": record.get("PE", {}).get("lastPrice", 0),
                 })
 
             df = pd.DataFrame(extracted_data)
-
-            # Debugging: Show available columns
-            st.write("🔍 Available Option Chain Columns:", df.columns.tolist())
+            st.write("🔍 Extracted Option Chain Data:", df.head())  # Debugging
 
             return df
 
@@ -65,93 +57,79 @@ def fetch_option_chain():
         st.error(f"❌ NSE API error: {e}")
         return pd.DataFrame()
 
-# Fetch Market News
-def get_latest_news():
+# --- Fetch News & Perform Sentiment Analysis ---
+def fetch_news_sentiment():
     try:
         url = "https://www.moneycontrol.com/news/business/markets/"
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, "html.parser")
-        headlines = [a.text.strip() for a in soup.find_all("h2")[:5]]
-        return headlines
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            headlines = [h.text for h in soup.select(".headline")[:5]]  # Fetch top 5 headlines
+            
+            sentiment_score = sum([TextBlob(headline).sentiment.polarity for headline in headlines]) / len(headlines)
+            sentiment = "Bullish" if sentiment_score > 0 else "Bearish" if sentiment_score < 0 else "Neutral"
+            
+            return sentiment, headlines
+        else:
+            return "Neutral", ["❌ Failed to fetch news"]
     except Exception as e:
-        st.error(f"❌ Error fetching news: {e}")
-        return []
+        return "Neutral", [f"❌ Error fetching news: {e}"]
 
-# Analyze News Sentiment
-def analyze_news_sentiment():
-    news_list = get_latest_news()
-    if not news_list:
-        return "Neutral"
-
-    scores = [news_sentiment_model(news)[0] for news in news_list]
-    avg_sentiment = sum([score[0]['score'] if score[0]['label'] == "positive" else -score[0]['score'] for score in scores]) / len(scores)
-
-    return "Bullish" if avg_sentiment > 0.05 else "Bearish" if avg_sentiment < -0.05 else "Neutral"
-
-# Predict Market Movement
-def predict_market_trend():
-    option_chain = fetch_option_chain()
-    
+# --- Predict Market Movement ---
+def predict_market_trend(option_chain):
     if option_chain.empty:
         return "❌ Insufficient Data for Prediction"
-    
-    # Print columns to check actual available names
-    st.write("📊 Available Option Chain Columns:", option_chain.columns.tolist())
 
-    # Identify correct column names
-    call_oi_col = next((col for col in option_chain.columns if "CE_openInterest" in col or "CE" in col.lower()), None)
-    put_oi_col = next((col for col in option_chain.columns if "PE_openInterest" in col or "PE" in col.lower()), None)
+    call_oi = option_chain["CE_openInterest"].sum()
+    put_oi = option_chain["PE_openInterest"].sum()
+    sentiment, _ = fetch_news_sentiment()
 
-    if not call_oi_col or not put_oi_col:
-        return "❌ Missing Open Interest Data in API Response"
-
-    # Extract Call & Put Open Interest (OI)
-    call_oi = option_chain[call_oi_col].iloc[:10].sum()
-    put_oi = option_chain[put_oi_col].iloc[:10].sum()
-    
-    news_sentiment = analyze_news_sentiment()
-
-    # Combine Sentiment & OI Data
-    if put_oi > call_oi and news_sentiment == "Bullish":
-        return "📈 Up"
-    elif call_oi > put_oi and news_sentiment == "Bearish":
-        return "📉 Down"
+    if put_oi > call_oi and sentiment == "Bullish":
+        return "📈 Up (Bullish)"
+    elif call_oi > put_oi and sentiment == "Bearish":
+        return "📉 Down (Bearish)"
     else:
-        return "🔄 Neutral"
+        return "➖ Neutral"
 
-# Streamlit UI
-st.title("📈 NIFTY Option Chain & Market Prediction")
+# --- Predict Target Price ---
+def predict_target_price(nifty_price, option_chain):
+    if option_chain.empty:
+        return "❌ Insufficient Data for Prediction"
 
-# Live NIFTY Price
-st.subheader("Live NIFTY Price")
-nifty_price = get_nifty_price()
-if nifty_price:
-    st.write(f"**Current NIFTY Price:** {nifty_price}")
-else:
-    st.warning("⚠ Could not fetch live price.")
+    call_oi = option_chain["CE_openInterest"].sum()
+    put_oi = option_chain["PE_openInterest"].sum()
+    sentiment, _ = fetch_news_sentiment()
 
-# Option Chain Data
-st.subheader("📊 Option Chain Data")
+    if put_oi > call_oi and sentiment == "Bullish":
+        target_price = nifty_price * 1.01  # Predict 1% increase
+    elif call_oi > put_oi and sentiment == "Bearish":
+        target_price = nifty_price * 0.99  # Predict 1% decrease
+    else:
+        target_price = nifty_price  # No change expected
+
+    return round(target_price, 2)
+
+# --- Main Execution ---
 option_chain = fetch_option_chain()
+st.subheader("📊 Option Chain Data")
+st.dataframe(option_chain.head() if not option_chain.empty else "❌ Failed to fetch data")
 
-if option_chain.empty:
-    st.warning("❌ Option Chain data not available.")
-else:
-    st.dataframe(option_chain.head())  # Display first few rows
-
-# Market News & Sentiment
-st.subheader("📰 Market News & Sentiment Analysis")
-news_list = get_latest_news()
-news_sentiment = analyze_news_sentiment()
-st.write(f"**News Sentiment:** {news_sentiment}")
-
-if news_list:
-    for news in news_list:
-        st.write(f"- {news}")
-else:
-    st.warning("⚠ No news headlines found.")
-
-# Market Prediction (Next 15 Min)
+# --- Market Prediction ---
 st.subheader("📉 Market Prediction (Next 15 Minutes)")
-prediction = predict_market_trend()
+prediction = predict_market_trend(option_chain)
 st.write(f"**Predicted Market Move:** {prediction}")
+
+# --- Target Price Prediction ---
+nifty_price = 22000  # Set manually or fetch from API
+target_price = predict_target_price(nifty_price, option_chain)
+st.write(f"🎯 **Target Price (Next 15 min):** {target_price}")
+
+# --- News Sentiment ---
+st.subheader("📰 News Sentiment Analysis")
+sentiment, headlines = fetch_news_sentiment()
+st.write(f"**Market Sentiment:** {sentiment}")
+st.write("**Top Headlines:**")
+for headline in headlines:
+    st.markdown(f"- {headline}")
